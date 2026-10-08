@@ -7,11 +7,20 @@ extern XOpenDisplay
 extern XDefaultScreen
 extern XBlackPixel
 extern XWhitePixel
+extern XDefaultRootWindow
+extern XCreateSimpleWindow
+extern XSelectInput
+extern XMapWindow
+extern XFlush
+
+ButtonPressMask equ 1 << 2
+StructureNotifyMask equ 1 << 17
+EventMask equ ButtonPressMask | StructureNotifyMask
 
 section .data
     dbprintcheck db "dbprint check passed",10
     dbprintcheck_len equ $ - dbprintcheck
-    dberrcheck db "dberr check passed",10
+    dberrcheck db "dberr check passed",10,10
     dberrcheck_len equ $ - dberrcheck
     displayconnerr db "Unable to connect to display",10
     displayconnerr_len equ $ - displayconnerr
@@ -40,6 +49,8 @@ print: ; rdi *buf, rsi strlen
     ret
 
 _start:
+    ; align the stack :<
+    and rsp, -16
     ; -DEBUG test dbprint functionality
     mov rdi, dbprintcheck
     mov rsi, dbprintcheck_len
@@ -70,7 +81,7 @@ _start:
 
     mov rdi, [dpy]
     call XDefaultScreen
-    mov [screen_num], rax
+    mov [screen_num], eax
 
     mov rdi, [dpy]
     mov rsi, [screen_num]
@@ -78,12 +89,49 @@ _start:
     mov [background], rax
 
     mov rdi, [dpy]
-    mov rsi, [screen_num]
+    mov esi, [screen_num]
     call XWhitePixel
     mov [border], rax 
 
     mov [width], 40
     mov [height], 40
+
+    mov rdi, [dpy]
+    call XDefaultRootWindow
+    mov rsi, rax
+
+    mov rdi, [dpy]
+    xor rdx, rdx
+    xor rcx, rcx
+    mov r8d, [width]
+    mov r9d, [height]
+
+    ; stack magickery for other args of XCreateSimpleWindow
+    sub rsp, 32
+    mov qword [rsp], 2
+    mov rax, [border]
+    mov [rsp+8], rax
+    mov rax, [background]
+    mov [rsp+16], rax
+    call XCreateSimpleWindow
+    ; free up stack to conserve ram and save the earth
+    add rsp, 32
+    mov [win], rax 
+
+    mov rdi, [dpy]
+    mov rsi, [win]
+    mov edx, EventMask
+    call XSelectInput
+
+    mov rdi, [dpy]
+    mov rsi, [win]
+    call XMapWindow
+
+    mov rdi, [dpy]
+    call XFlush
+
+    label:
+    jmp label
 
     exit:
     mov eax, 60
