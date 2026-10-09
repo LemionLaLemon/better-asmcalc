@@ -28,6 +28,15 @@ extern XDrawString
 extern XLoadQueryFont
 extern XSetFont
 extern XTextWidth
+extern XDefaultVisual
+extern XDefaultColormap
+
+; Xft functions
+extern XftFontOpenName
+extern XftDrawCreate
+extern XftColorAllocValue
+extern XftTextExtentsUtf8
+extern XftDrawStringUtf8
 
 ; input masks
 KeyPressMask equ 1 << 0
@@ -47,6 +56,14 @@ section .data
     windowtitle db "Calculator",0
     newline db 10
 
+    font_name db "Cantarell-12", 0
+
+    text_rgba:
+        dw 0x2020
+        dw 0x2020
+        dw 0x2020
+        dw 0xFFFF
+
     struc Button
         .x: resd 1
         .y: resd 1
@@ -65,10 +82,10 @@ section .data
         dq label_ce
         dd 115, 90, 50, 40, 0, "C" ; clear
         dq label_c
-        dd 170, 90, 50, 40, 0, "PM" ; ±
-        dq label_pm
-        dd 225, 90, 50, 40, 0, "SR" ; √
-        dq label_sr
+        dd 170, 90, 50, 40, 0, "LP" ; (
+        dq label_lp
+        dd 225, 90, 50, 40, 0, "RP" ; )
+        dq label_rp
 
         dd 5, 135, 50, 40, 1, 7
         dq label_7
@@ -78,8 +95,8 @@ section .data
         dq label_9
         dd 170, 135, 50, 40, 0, "DV" ; division
         dq label_dv
-        dd 225, 135, 50, 40, 0, "MD" ; modulo
-        dq label_md
+        dd 225, 135, 50, 40, 0, "SR" ; square root
+        dq label_sr
 
         dd 5, 180, 50, 40, 1, 4
         dq label_4
@@ -117,11 +134,11 @@ section .data
         label_bk db "←", 0
         label_ce db "CE", 0
         label_c db "C", 0
-        label_pm db "±", 0
+        label_lp db "(  ", 0
+        label_rp db ")", 0
+        label_dv db "÷", 0
         label_sr db "√", 0
-        label_dv db "/", 0
-        label_md db "%", 0
-        label_mt db "*", 0
+        label_mt db "×", 0
         label_rc db "1/x", 0
         label_sb db "-", 0
         label_eq db "=", 0
@@ -153,6 +170,10 @@ section .bss
     gc resb 8
 
     font_struct resq 1
+
+    xft_font resq 1
+    xft_draw resq 1
+    xft_color resb 16
 
 section .text
 print: ; rdi *buf, rsi strlen
@@ -260,20 +281,45 @@ _start:
     call XCreateGC
     mov [gc], rax
 
-    ; mov rdi, [dpy]
-    ; lea rsi, [font_name]
-    ; call XLoadQueryFont
+    mov rdi, [dpy]
+    mov esi, [screen_num]
+    lea rdx, [font_name]
+    call XftFontOpenName
 
-    ; test rax, rax
-    ; jz exit
+    test rax, rax
+    jz exit
+    mov [xft_font], rax
 
-    ; mov [font_struct], rax
+    mov rdi, [dpy]
+    mov esi, [screen_num]
+    call XDefaultVisual
+    mov r12, rax
 
-    ; mov rdi, [dpy]
-    ; mov rsi, [gc]
-    ; mov rax, [font_struct]
-    ; mov rdx, [rax]
-    ; call XSetFont
+    mov rdi, [dpy]
+    mov esi, [screen_num]
+    call XDefaultColormap
+    mov r13, rax
+
+    mov rdi, [dpy]
+    mov rsi, [win]
+    mov rdx, r12
+    mov rcx, r13
+    call XftDrawCreate
+
+    test rax, rax
+    jz exit
+    
+    mov [xft_draw], rax
+
+    mov rdi, [dpy]
+    mov rsi, r12
+    mov rdx, r13
+    lea rcx, [text_rgba]
+    lea r8, [xft_color]
+    call XftColorAllocValue
+
+    test eax, eax
+    jz exit
 
     %define btn_w 50
     %define btn_h 40
@@ -361,7 +407,8 @@ _start:
     DrawCenteredLabel: ; rdi *Button (struct)
         push rbx
         push r12
-        sub rsp, 8
+        push r13
+        sub rsp, 32
 
         mov rbx, rdi
 
@@ -370,30 +417,44 @@ _start:
         call stringutilsstrlen
         mov r12d, eax
 
-        mov rdx, 0x202020
-        call ForegroundBoilerplate
+        ; center x
+        mov rdi, [dpy]
+        mov rsi, [xft_font]
+        mov rdx, [rbx + Button.label]
+        mov ecx, r12d
+        lea r8, [rsp]
+        call XftTextExtentsUtf8
 
-        mov ecx, [rbx + Button.width]
-        mov eax, r12d
-        imul eax, 6
-        sub ecx, eax
-        sar ecx, 1
-        add ecx, [rbx + Button.x]
+        movzx eax, word [rsp]
+        movsx edx, word [rsp + 4]
+
+        mov r13d, [rbx + Button.width]
+        sub r13d, eax
+        sar r13d, 1
+        sub r13d, edx
+        add r13d, [rbx + Button.x]
+
+        ; center y
+        movsx eax, word [rsp + 2]
+        movsx edx, word [rsp + 6]
 
         mov r8d, [rbx + Button.height]
+        sub r8d, eax
         sar r8d, 1
+        add r8d, edx
         add r8d, [rbx + Button.y]
-        add r8d, 5
 
-        mov rdi, [dpy]
-        mov rsi, [win]
-        mov rdx, [gc]
+        mov rdi, [xft_draw]
+        lea rsi, [xft_color]
+        mov rdx, [xft_font]
+        mov ecx, r13d
         mov r9, [rbx + Button.label]
 
         mov [rsp], r12
-        call XDrawString
+        call XftDrawStringUtf8
 
-        add rsp, 8
+        add rsp, 32
+        pop r13
         pop r12
         pop rbx
         ret

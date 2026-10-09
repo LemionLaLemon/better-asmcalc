@@ -11,7 +11,7 @@ TARGET   := $(BUILD_DIR)/$(APP)
 
 NASMFLAGS := -f elf64 -g -F dwarf
 LDFLAGS   := -dynamic-linker /lib64/ld-linux-x86-64.so.2
-LDLIBS    := -lX11 -lc
+LDLIBS    := -lX11 -lXft -lc
 
 .PHONY: all build run debug clean
 
