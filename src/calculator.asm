@@ -39,6 +39,51 @@ section .data
     windowtitle db "Calculator",0
     newline db 10
 
+    struc Button
+        .x: resd 1
+        .y: resd 1
+        .width: resd 1
+        .height: resd 1
+        .type: resd 1
+        .id: resd 1
+    endstruc
+
+    buttons:
+        ; x, y, w, h, type, id, label
+        dd 5, 90, 50, 40, 0, "BK" ; backspace
+        dd 60, 90, 50, 40, 0, "CE" ; clear entry
+        dd 115, 90, 50, 40, 0, "C" ; clear
+        dd 170, 90, 50, 40, 0, "PM" ; ±
+        dd 225, 90, 50, 40, 0, "SR" ; √
+
+        dd 5, 135, 50, 40, 1, 7
+        dd 60, 135, 50, 40, 1, 8
+        dd 115, 135, 50, 40, 1, 9
+        dd 170, 135, 50, 40, 0, "DV" ; division
+        dd 225, 135, 50, 40, 0, "MD" ; modulo
+
+        dd 5, 180, 50, 40, 1, 4
+        dd 60, 180, 50, 40, 1, 5
+        dd 115, 180, 50, 40, 1, 6
+        dd 170, 180, 50, 40, 0, "MT" ; multiplication
+        dd 225, 180, 50, 40, 0, "RC" ; reciprocal
+
+        dd 5, 225, 50, 40, 1, 1
+        dd 60, 225, 50, 40, 1, 2
+        dd 115, 225, 50, 40, 1, 3
+        dd 170, 225, 50, 40, 0, "SB" ; subtraction
+        dd 225, 225, 50, 85, 0, "EQ" ; equals
+
+        dd 5, 270, 105, 40, 1, 0
+        dd 115, 270, 50, 40, 1, "DC" ; decimal
+        dd 170, 270, 50, 40, 0, "AD" ; addition
+
+
+    buttonsTotal equ ($ - buttons) / Button_size
+
+    buttonlabels:
+        label_bk db "←", 0
+
 section .bss
     ; X11 setup
     screen_num resb 4
@@ -178,68 +223,37 @@ _start:
 
     onExpose:
         call draw
-        %macro Button 5
-            lea rdi, [%1]
-            lea rsi, [%2]
-            lea rdx, [%3]
-            lea rcx, [%4]
-            mov r9, %5
-            call DrawButton
-        %endmacro
+        ;%macro Button 5
+        ;    lea rdi, [%1]
+        ;    lea rsi, [%2]
+        ;    lea rdx, [%3]
+        ;    lea rcx, [%4]
+        ;    mov r9, %5
+        ;    call DrawButton
+        ;%endmacro
         
-        mov r12, 5 ; buttons x
-        mov r13, gap ; gap tracker
-        mov r14, 90 ; Y
-        mov r15, 0 ; light
-        call draw_buttons
+        push rbx
+        push r12
 
-        mov rcx, 2
-        .row2_loop:
-            push rcx
-            mov r12, 3 ; buttons x
-            mov r13, gap ; gap tracker
-            add r14, btn_h + gap ; Y
-            mov r15, 1 ; light
-            call draw_buttons
+        lea rbx, buttons
+        mov r12, buttonsTotal
 
-            mov r12, 2 ; buttons x
-            mov r15, 0 ; light
-            call draw_buttons
-            pop rcx
-        loop .row2_loop
+        .DrawButtonsLoop:
+        mov edi, [rbx + Button.x]
+        mov esi, [rbx + Button.y]
+        mov rdx, [rbx + Button.width]
+        mov rcx, [rbx + Button.height]
+        mov r9d, [rbx + Button.type]
+        call DrawButton
 
-        mov r12, 3 ; buttons x
-        mov r13, gap ; gap tracker
-        add r14, btn_h + gap ; Y
-        mov r15, 1 ; light
-        call draw_buttons
+        add rbx, Button_size
+        dec r12
+        jnz .DrawButtonsLoop 
 
-        mov r12, 1 ; buttons x
-        mov r15, 0 ; light
-        call draw_buttons
-
-
-        mov r12, 1 ; buttons x
-        lea r13, [btn_w * 2 + 15]  ; gap tracker
-        add r14, btn_h + gap ; Y
-        mov r15, 1 ; light
-        call draw_buttons
-
-        mov r12, 1 ; buttons x
-        mov r15, 0 ; light
-        call draw_buttons
-
-        Button 5, 270, 105, btn_h, 1
-        Button 225, 225, btn_w, 85, 0
+        pop r12
+        pop rbx
 
         jmp mainloop
-
-        draw_buttons:
-            Button r13, r14, btn_w, btn_h, r15
-            add r13, btn_w + gap
-            dec r12
-            jnz draw_buttons
-            ret
 
     draw: ; Result window
         %define border_radius 1
