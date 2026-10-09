@@ -1,4 +1,4 @@
-APP      := asmalc
+APP      := asmcalc
 SRC_DIR  := src
 BUILD_DIR := build
 

@@ -1,8 +1,12 @@
 default rel
 
 global _start
+; debug
 extern dbprint ; rdi *buf, rsi strlen
 extern dberr ; rdi *buf, rsi strlen
+
+; stringutils
+extern stringutilsstrlen
 
 ; X11 functions
 extern XOpenDisplay
@@ -20,6 +24,10 @@ extern XSetForeground
 extern XSetWindowBackground
 extern XFillRectangle
 extern XClearWindow
+extern XDrawString
+extern XLoadQueryFont
+extern XSetFont
+extern XTextWidth
 
 ; input masks
 KeyPressMask equ 1 << 0
@@ -46,43 +54,89 @@ section .data
         .height: resd 1
         .type: resd 1
         .id: resd 1
+        .label: resq 1
     endstruc
 
     buttons:
         ; x, y, w, h, type, id, label
         dd 5, 90, 50, 40, 0, "BK" ; backspace
+        dq label_bk
         dd 60, 90, 50, 40, 0, "CE" ; clear entry
+        dq label_ce
         dd 115, 90, 50, 40, 0, "C" ; clear
+        dq label_c
         dd 170, 90, 50, 40, 0, "PM" ; ±
+        dq label_pm
         dd 225, 90, 50, 40, 0, "SR" ; √
+        dq label_sr
 
         dd 5, 135, 50, 40, 1, 7
+        dq label_7
         dd 60, 135, 50, 40, 1, 8
+        dq label_8
         dd 115, 135, 50, 40, 1, 9
+        dq label_9
         dd 170, 135, 50, 40, 0, "DV" ; division
+        dq label_dv
         dd 225, 135, 50, 40, 0, "MD" ; modulo
+        dq label_md
 
         dd 5, 180, 50, 40, 1, 4
+        dq label_4
         dd 60, 180, 50, 40, 1, 5
+        dq label_5
         dd 115, 180, 50, 40, 1, 6
+        dq label_6
         dd 170, 180, 50, 40, 0, "MT" ; multiplication
+        dq label_mt
         dd 225, 180, 50, 40, 0, "RC" ; reciprocal
+        dq label_rc
 
         dd 5, 225, 50, 40, 1, 1
+        dq label_1
         dd 60, 225, 50, 40, 1, 2
+        dq label_2
         dd 115, 225, 50, 40, 1, 3
+        dq label_3
         dd 170, 225, 50, 40, 0, "SB" ; subtraction
+        dq label_sb
         dd 225, 225, 50, 85, 0, "EQ" ; equals
+        dq label_eq
 
         dd 5, 270, 105, 40, 1, 0
+        dq label_0
         dd 115, 270, 50, 40, 1, "DC" ; decimal
+        dq label_dc
         dd 170, 270, 50, 40, 0, "AD" ; addition
+        dq label_ad
 
 
     buttonsTotal equ ($ - buttons) / Button_size
 
     buttonlabels:
         label_bk db "←", 0
+        label_ce db "CE", 0
+        label_c db "C", 0
+        label_pm db "±", 0
+        label_sr db "√", 0
+        label_dv db "/", 0
+        label_md db "%", 0
+        label_mt db "*", 0
+        label_rc db "1/x", 0
+        label_sb db "-", 0
+        label_eq db "=", 0
+        label_dc db ".", 0
+        label_ad db "+", 0
+        label_0 db "0",0
+        label_1 db "1",0
+        label_2 db "2",0
+        label_3 db "3",0
+        label_4 db "4",0
+        label_5 db "5",0
+        label_6 db "6",0
+        label_7 db "7",0
+        label_8 db "8",0
+        label_9 db "9",0
 
 section .bss
     ; X11 setup
@@ -97,6 +151,8 @@ section .bss
     ev resb 192 ; XEvent 
 
     gc resb 8
+
+    font_struct resq 1
 
 section .text
 print: ; rdi *buf, rsi strlen
@@ -204,6 +260,21 @@ _start:
     call XCreateGC
     mov [gc], rax
 
+    ; mov rdi, [dpy]
+    ; lea rsi, [font_name]
+    ; call XLoadQueryFont
+
+    ; test rax, rax
+    ; jz exit
+
+    ; mov [font_struct], rax
+
+    ; mov rdi, [dpy]
+    ; mov rsi, [gc]
+    ; mov rax, [font_struct]
+    ; mov rdx, [rax]
+    ; call XSetFont
+
     %define btn_w 50
     %define btn_h 40
     %define gap 5
@@ -223,14 +294,6 @@ _start:
 
     onExpose:
         call draw
-        ;%macro Button 5
-        ;    lea rdi, [%1]
-        ;    lea rsi, [%2]
-        ;    lea rdx, [%3]
-        ;    lea rcx, [%4]
-        ;    mov r9, %5
-        ;    call DrawButton
-        ;%endmacro
         
         push rbx
         push r12
@@ -239,15 +302,18 @@ _start:
         mov r12, buttonsTotal
 
         .DrawButtonsLoop:
-        mov edi, [rbx + Button.x]
-        mov esi, [rbx + Button.y]
-        mov rdx, [rbx + Button.width]
-        mov rcx, [rbx + Button.height]
-        mov r9d, [rbx + Button.type]
-        call DrawButton
+            mov edi, [rbx + Button.x]
+            mov esi, [rbx + Button.y]
+            mov rdx, [rbx + Button.width]
+            mov rcx, [rbx + Button.height]
+            mov r9d, [rbx + Button.type]
+            call DrawButton
 
-        add rbx, Button_size
-        dec r12
+            mov rdi, rbx
+            call DrawCenteredLabel
+
+            add rbx, Button_size
+            dec r12
         jnz .DrawButtonsLoop 
 
         pop r12
@@ -290,6 +356,46 @@ _start:
         mov rdx, result_w - resultborderwidth * 2
         mov rcx, result_h / 2
         call DrawRectangle
+        ret
+
+    DrawCenteredLabel: ; rdi *Button (struct)
+        push rbx
+        push r12
+        sub rsp, 8
+
+        mov rbx, rdi
+
+        ; strlen
+        mov rdi, [rbx + Button.label]
+        call stringutilsstrlen
+        mov r12d, eax
+
+        mov rdx, 0x202020
+        call ForegroundBoilerplate
+
+        mov ecx, [rbx + Button.width]
+        mov eax, r12d
+        imul eax, 6
+        sub ecx, eax
+        sar ecx, 1
+        add ecx, [rbx + Button.x]
+
+        mov r8d, [rbx + Button.height]
+        sar r8d, 1
+        add r8d, [rbx + Button.y]
+        add r8d, 5
+
+        mov rdi, [dpy]
+        mov rsi, [win]
+        mov rdx, [gc]
+        mov r9, [rbx + Button.label]
+
+        mov [rsp], r12
+        call XDrawString
+
+        add rsp, 8
+        pop r12
+        pop rbx
         ret
 
     DrawButton: ; rdi X, rsi Y, rdx, W, rcx, H, r8 Label (TODO), r9 Type (0 dark, 1 light)
@@ -382,9 +488,11 @@ _start:
         ret
 
     ForegroundBoilerplate:
+        sub rsp, 8
         mov rdi, [dpy]
         mov rsi, [gc]
         call XSetForeground
+        add rsp, 8
         ret
 
     SetForegroundWhite:
