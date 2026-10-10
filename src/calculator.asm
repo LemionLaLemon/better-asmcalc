@@ -2,8 +2,8 @@ default rel
 
 global _start
 ; debug
-extern dbprint ; rdi *buf, rsi strlen
-extern dberr ; rdi *buf, rsi strlen
+extern dbprint
+extern dberr
 
 ; stringutils
 extern stringutilsstrlen
@@ -21,15 +21,16 @@ extern XNextEvent
 extern XStoreName
 extern XCreateGC
 extern XSetForeground
-extern XSetWindowBackground
 extern XFillRectangle
-extern XClearWindow
 extern XDrawString
 extern XLoadQueryFont
 extern XSetFont
 extern XTextWidth
 extern XDefaultVisual
 extern XDefaultColormap
+extern XInternAtom
+extern XSetWMProtocols
+extern XCloseDisplay
 
 ; Xft functions
 extern XftFontOpenName
@@ -42,7 +43,7 @@ extern XftDrawStringUtf8
 KeyPressMask equ 1 << 0
 ButtonPressMask equ 1 << 2
 ExposureMask equ 1 << 15
-EventMask equ ButtonPressMask | ButtonPressMask | ExposureMask
+EventMask equ KeyPressMask | ButtonPressMask | ExposureMask
 
 section .data
     dbprintcheck db "dbprint check passed",10
@@ -56,9 +57,14 @@ section .data
     windowtitle db "Calculator",0
     newline db 10
 
+    leftmouseprint db "LMB pressed",10,0
+    leftmouseprint_len equ $ - leftmouseprint
+
     font_name db "Cantarell-12", 0
 
-    text_rgba:
+    wm_delete_name db "WM_DELETE_WINDOW", 0
+
+    text_rgba: ; can you believe it's rrrrggggbbbbaaaa
         dw 0x2020
         dw 0x2020
         dw 0x2020
@@ -76,57 +82,56 @@ section .data
 
     buttons:
         ; x, y, w, h, type, id, label
-        dd 5, 90, 50, 40, 0, "BK" ; backspace
+        dd 5, 90, 50, 40, 0, "B" ; backspace
         dq label_bk
-        dd 60, 90, 50, 40, 0, "CE" ; clear entry
+        dd 60, 90, 50, 40, 0, "E" ; clear entry
         dq label_ce
         dd 115, 90, 50, 40, 0, "C" ; clear
         dq label_c
-        dd 170, 90, 50, 40, 0, "LP" ; (
+        dd 170, 90, 50, 40, 0, "(" ; (
         dq label_lp
-        dd 225, 90, 50, 40, 0, "RP" ; )
+        dd 225, 90, 50, 40, 0, ")" ; )
         dq label_rp
 
-        dd 5, 135, 50, 40, 1, 7
+        dd 5, 135, 50, 40, 1, "7"
         dq label_7
-        dd 60, 135, 50, 40, 1, 8
+        dd 60, 135, 50, 40, 1, "8"
         dq label_8
-        dd 115, 135, 50, 40, 1, 9
+        dd 115, 135, 50, 40, 1, "9"
         dq label_9
-        dd 170, 135, 50, 40, 0, "DV" ; division
+        dd 170, 135, 50, 40, 0, "/" ; division
         dq label_dv
-        dd 225, 135, 50, 40, 0, "SR" ; square root
+        dd 225, 135, 50, 40, 0, "S" ; square root
         dq label_sr
 
-        dd 5, 180, 50, 40, 1, 4
+        dd 5, 180, 50, 40, 1, "4"
         dq label_4
-        dd 60, 180, 50, 40, 1, 5
+        dd 60, 180, 50, 40, 1, "5"
         dq label_5
-        dd 115, 180, 50, 40, 1, 6
+        dd 115, 180, 50, 40, 1, "6"
         dq label_6
-        dd 170, 180, 50, 40, 0, "MT" ; multiplication
+        dd 170, 180, 50, 40, 0, "*" ; multiplication
         dq label_mt
-        dd 225, 180, 50, 40, 0, "RC" ; reciprocal
+        dd 225, 180, 50, 40, 0, "R" ; reciprocal
         dq label_rc
 
-        dd 5, 225, 50, 40, 1, 1
+        dd 5, 225, 50, 40, 1, "1"
         dq label_1
-        dd 60, 225, 50, 40, 1, 2
+        dd 60, 225, 50, 40, 1, "2"
         dq label_2
-        dd 115, 225, 50, 40, 1, 3
+        dd 115, 225, 50, 40, 1, "3"
         dq label_3
-        dd 170, 225, 50, 40, 0, "SB" ; subtraction
+        dd 170, 225, 50, 40, 0, "-" ; subtraction
         dq label_sb
-        dd 225, 225, 50, 85, 0, "EQ" ; equals
+        dd 225, 225, 50, 85, 0, "=" ; equals
         dq label_eq
 
-        dd 5, 270, 105, 40, 1, 0
+        dd 5, 270, 105, 40, 1, "0"
         dq label_0
-        dd 115, 270, 50, 40, 1, "DC" ; decimal
+        dd 115, 270, 50, 40, 1, "." ; decimal
         dq label_dc
-        dd 170, 270, 50, 40, 0, "AD" ; addition
+        dd 170, 270, 50, 40, 0, "+" ; addition
         dq label_ad
-
 
     buttonsTotal equ ($ - buttons) / Button_size
 
@@ -160,10 +165,10 @@ section .bss
     screen_num resb 4
     width resb 4
     height resb 4
-    background resb 8
     border resb 8
     win resb 8
     dpy resb 8
+    wm_delete_atom resq 1
 
     ev resb 192 ; XEvent 
 
@@ -175,17 +180,12 @@ section .bss
     xft_draw resq 1
     xft_color resb 16
 
-section .text
-print: ; rdi *buf, rsi strlen
-    mov rdx, rsi
-    mov rsi, rdi
-    mov rax, 1
-    mov rdi, 1
-    ret
+    expression_cap equ 256
+    expressionBuffer resb expression_cap
+    expressionLength resq 1
 
+section .text
 _start:
-    ; align the stack :<
-    and rsp, -16
     ; -DEBUG test dbprint functionality
     mov rdi, dbprintcheck
     mov rsi, dbprintcheck_len
@@ -210,10 +210,9 @@ _start:
     jmp exit
 
     displayconndone:
-
-    mov rdi, displayconn
-    mov rsi, displayconn_len
-    call dbprint
+        mov rdi, displayconn
+        mov rsi, displayconn_len
+        call dbprint
 
     mov rdi, [dpy]
     call XDefaultScreen
@@ -242,22 +241,22 @@ _start:
     mov qword [rsp], 2
     mov rax, [border]
     mov [rsp+8], rax
-    mov rax, [background]
-    mov [rsp+16], rax
+    mov qword [rsp+16], 0xD9E4F1
     call XCreateSimpleWindow
-    ; free up stack to conserve ram and save the earth
-    add rsp, 32
+    add rsp, 32 ; free up stack to conserve ram and save the earth :>
     mov [win], rax 
 
     mov rdi, [dpy]
-    mov rsi, [win]
-    mov rdx, 0xD9E4F1
-    call XSetWindowBackground
-    mov [background], rax
+    lea rsi, [wm_delete_name]
+    xor edx, edx
+    call XInternAtom
+    mov [wm_delete_atom], rax
 
     mov rdi, [dpy]
     mov rsi, [win]
-    call XClearWindow
+    lea rdx, [wm_delete_atom]
+    mov ecx, 1
+    call XSetWMProtocols
 
     mov rdi, [dpy]
     mov rsi, [win]
@@ -328,15 +327,147 @@ _start:
     %define btn_top 24
     %define btn_bottom 27
 
+    ; Main program loop
     mainloop:
         mov rdi, [dpy]
         lea rsi, [ev]
         call XNextEvent
 
+        ; Expose event
         cmp dword [ev], 12
         je onExpose
 
+        ; Button press event
+        cmp dword [ev], 4
+        je onButtonPress
+
+        ; Key press event
+        cmp dword [ev], 2
+        je onKeyPress
+
+        cmp dword [ev], 33
+        je onClientMessage
+
     jmp mainloop
+
+    onClientMessage:
+        mov rax, [ev + 56]
+        cmp rax, [wm_delete_atom]
+        je .closeWindow
+
+        jmp mainloop
+
+        .closeWindow:
+            mov rdi, [dpy]
+            call XCloseDisplay
+            jmp exit
+
+    onKeyPress:
+
+    onButtonPress:
+        struc Mouse
+            .type resd 1
+            .pad0 resb 60
+            .x resd 1
+            .y resd 1
+            .xroot resd 1
+            .yroot resd 1
+            .state resd 1
+            .button resd 1
+        endstruc
+
+        mov rdi, leftmouseprint
+        mov rsi, leftmouseprint_len
+        call dbprint
+
+        ; left mouse
+        mov eax, [ev + Mouse.button]
+        cmp eax, 1
+        jne .break
+
+        mov edi, [ev + Mouse.x]
+        mov esi, [ev + Mouse.y]
+
+        ; for button in Buttons do
+        ; if mouse.x >= button.x
+        ; and mouse.x < button.x + button.width
+        ; and mouse.y >= button.y
+        ; and mouse.y < button.y + button.height
+        lea rcx, buttons
+        mov r12, buttonsTotal
+
+        .ForEachButton:
+            mov eax, [ev + Mouse.x]
+            cmp eax, [rcx + Button.x]
+            jl .skip
+
+            mov edx, [rcx + Button.width]
+            add edx, [rcx + Button.x]
+            cmp eax, edx
+            jge .skip
+
+            mov eax, [ev + Mouse.y]
+            cmp eax, [rcx + Button.y]
+            jl .skip
+
+            mov edx, [rcx + Button.height]
+            add edx, [rcx + Button.y]
+            cmp eax, edx
+            jge .skip
+
+            jmp .found
+
+            .skip:
+                add rcx, Button_size
+                dec r12
+                jnz .ForEachButton
+            
+            jmp .break
+
+        .found:
+            movzx edi, byte [rcx + Button.id]
+
+            cmp dil, "B"
+            ; je .backspace
+            cmp dil, "E"
+            ; je .clearEntry
+            cmp dil, "C"
+            ; je .clearAll
+            cmp dil, "S"
+            ; je .squareRoot
+            cmp dil, "R"
+            ; je .reciprocal
+            cmp dil, '='
+            ; je .evaluate
+
+            call addToBuffer
+
+            mov r12, rcx
+
+            mov rdi, expressionBuffer
+            mov rsi, expressionLength
+            call dbprint
+
+            jmp .break
+
+        .break:
+            jmp mainloop
+
+    ; Add a character to the expression buffer
+    ; @param rdi character to append
+    addToBuffer:
+        mov rcx, [expressionLength]
+
+        cmp rcx, expression_cap - 1
+        jae .full
+
+        mov [expressionBuffer + rcx], dil
+        inc rcx
+        mov byte [expressionBuffer + rcx], 0
+        mov [expressionLength], rcx
+
+        .full:
+            ret
 
     onExpose:
         call draw
@@ -352,7 +483,7 @@ _start:
             mov esi, [rbx + Button.y]
             mov rdx, [rbx + Button.width]
             mov rcx, [rbx + Button.height]
-            mov r9d, [rbx + Button.type]
+            mov r8d, [rbx + Button.type]
             call DrawButton
 
             mov rdi, rbx
@@ -360,7 +491,7 @@ _start:
 
             add rbx, Button_size
             dec r12
-        jnz .DrawButtonsLoop 
+            jnz .DrawButtonsLoop 
 
         pop r12
         pop rbx
@@ -404,7 +535,9 @@ _start:
         call DrawRectangle
         ret
 
-    DrawCenteredLabel: ; rdi *Button (struct)
+    ; Draws a centered label on a button
+    ; @param rdi *Button
+    DrawCenteredLabel:
         push rbx
         push r12
         push r13
@@ -459,7 +592,13 @@ _start:
         pop rbx
         ret
 
-    DrawButton: ; rdi X, rsi Y, rdx, W, rcx, H, r8 Label (TODO), r9 Type (0 dark, 1 light)
+    ; Draws a button somewhere
+    ; @param rdi X Position
+    ; @param rdi Y Position
+    ; @param rdx Width
+    ; @param rcx Height
+    ; @param r8 Type (0 dark ｜1 light)
+    DrawButton:
         push rbp
         push rbx
         push r12
@@ -471,7 +610,7 @@ _start:
         mov r13, rsi
         mov r14, rdx
         mov r15, rcx
-        mov rbp, r9
+        mov rbp, r8
 
         ; Border
         call SetForegroundGray4
@@ -536,7 +675,12 @@ _start:
             call SetForegroundGray5
             ret
 
-    DrawRectangle: ; rdi X, rsi Y, rdx W, rcx H
+    ; Draws a rectangle
+    ; @param rdi X position
+    ; @param rsi Y position
+    ; @param rdx Width
+    ; @param rcx Height
+    DrawRectangle:
         push rcx
         mov r9, rdx
         mov rcx, rdi

@@ -16,6 +16,9 @@ print:
     syscall
     ret
 
+; Debug Print
+; @param rdi *Buf string buffer
+; @param rsi string length
 dbprint: ; rdi *buf, rsi strlen
     push rdi
     push rsi
@@ -37,6 +40,9 @@ dbprint: ; rdi *buf, rsi strlen
     call print
     ret
 
+; Debug Error
+; @param rdi *Buf string buffer
+; @param rsi string length
 dberr: ; rdi *buf, rsi strlen
     push rdi
     push rsi

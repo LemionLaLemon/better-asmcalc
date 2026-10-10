@@ -1,0 +1,7 @@
+{
+    "nasmIde.libraries": [
+        "X11",
+        "Xft",
+        "c"
+    ]
+}

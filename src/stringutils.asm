@@ -3,6 +3,11 @@ global stringutilsatoi
 global stringutilsstrlen
 
 section .text
+; Integer to ASCII
+; @param rax 64 bit signed integer
+; @param rdi buffer pointer
+; @return rdi buffer pointer
+; @return rax string length
 stringutilsitoa: ; $RAX 64 bit signed literal input, $RDI buffer pointer, $RAX string length literal output
     mov r8, rdi      ; Save buffer pointer
     mov r9, 10       ; Divisor (64 bit)
@@ -36,8 +41,11 @@ stringutilsitoa: ; $RAX 64 bit signed literal input, $RDI buffer pointer, $RAX s
         sub rax, rdi     ; Subtract the original start pointer
         ret
 
+; ASCII to Integer
 ; pray to all the gods we NEVER have to use atoi this function is so garbage it's unbelivable
-stringutilsatoi: ; $RAX pointer input, $RAX 32 bit signed int literal output
+; @param rax pointer
+; @return rax 32 bit signed integer
+stringutilsatoi:
     push rbx
     push r8
     push r9
