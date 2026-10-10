@@ -50,24 +50,13 @@ calcStrExpr: ; rdi *Buf, xmm0 float return
     ; @param parse_cursor (none)
     ; @return xmm0 float
     .ParseNumber:
-        push rbx
-
-        mov rbx, [parse_cursor]
-
-        mov rdi, rbx 
+        sub rsp, 8
+        mov rdi, [parse_cursor]
         lea rsi, [rel parse_cursor]
         call strtod
+        add rsp, 8
 
-        cmp [parse_cursor], rbx
-        je .invalid
-
-        pop rbx
         ret
-
-        .invalid:
-            pop rbx
-
-            ret
 
     ; Returns precedence of character at cursor position
     ; @param parse_cursor (none)

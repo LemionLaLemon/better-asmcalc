@@ -42,8 +42,11 @@ extern XftDrawStringUtf8
 ; input masks
 KeyPressMask equ 1 << 0
 ButtonPressMask equ 1 << 2
+ButtonReleaseMask equ 1 << 3
 ExposureMask equ 1 << 15
-EventMask equ KeyPressMask | ButtonPressMask | ExposureMask
+PointerMotionMask equ 1 << 6
+LeaveWindowMask equ 1 << 5
+EventMask equ KeyPressMask | ButtonPressMask | ExposureMask | LeaveWindowMask | PointerMotionMask | ButtonReleaseMask
 
 section .data
     dbprintcheck db "dbprint check passed",10
@@ -169,6 +172,9 @@ section .bss
     win resb 8
     dpy resb 8
     wm_delete_atom resq 1
+
+    pressedButton resq 1
+    hoveredButton resq 1
 
     ev resb 192 ; XEvent 
 
@@ -341,6 +347,10 @@ _start:
         cmp dword [ev], 4
         je onButtonPress
 
+        ; Button release event
+        cmp dword [ev], 5
+        je onButtonRelease
+
         ; Key press event
         cmp dword [ev], 2
         je onKeyPress
@@ -348,7 +358,45 @@ _start:
         cmp dword [ev], 33
         je onClientMessage
 
+        ; Mouse move event
+        cmp dword [ev], 6
+        je onMouseMovement
+
     jmp mainloop
+
+    onMouseMovement:
+        call findButtonFromMouse
+
+        cmp rax, [hoveredButton]
+        je .break
+
+        mov rbx, rax
+
+        mov rdi, [hoveredButton]
+        test rdi, rdi
+        jz .newButton
+
+        xor esi, esi
+        call RedrawButton
+
+        mov rdi, [hoveredButton]
+        call DrawCenteredLabel
+
+        .newButton:
+            mov [hoveredButton], rbx
+
+            test rbx, rbx
+            jz .break
+
+            mov rdi, rbx
+            mov esi, 1
+            call RedrawButton
+
+            mov rdi, rbx
+            call DrawCenteredLabel
+
+        .break:
+            jmp mainloop
 
     onClientMessage:
         mov rax, [ev + 56]
@@ -363,38 +411,76 @@ _start:
             jmp exit
 
     onKeyPress:
+        jmp mainloop
+
+    struc Mouse
+        .type resd 1
+        .pad0 resb 60
+        .x resd 1
+        .y resd 1
+        .xroot resd 1
+        .yroot resd 1
+        .state resd 1
+        .button resd 1
+    endstruc
+
+    onButtonRelease:
+        cmp dword [ev + Mouse.button], 1
+        jne .break
+
+        mov rdi, [pressedButton]
+
+        test rdi, rdi
+        jz .break
+
+        xor esi, esi
+        call RedrawButton
+        mov rdi, [pressedButton]
+        call DrawCenteredLabel
+
+        mov qword [pressedButton], 0
+
+        .break:
+            jmp mainloop
 
     onButtonPress:
-        struc Mouse
-            .type resd 1
-            .pad0 resb 60
-            .x resd 1
-            .y resd 1
-            .xroot resd 1
-            .yroot resd 1
-            .state resd 1
-            .button resd 1
-        endstruc
-
-        mov rdi, leftmouseprint
-        mov rsi, leftmouseprint_len
-        call dbprint
-
         ; left mouse
         mov eax, [ev + Mouse.button]
         cmp eax, 1
         jne .break
 
-        mov edi, [ev + Mouse.x]
-        mov esi, [ev + Mouse.y]
+        call findButtonFromMouse
+        mov [pressedButton], rax
 
-        ; for button in Buttons do
-        ; if mouse.x >= button.x
-        ; and mouse.x < button.x + button.width
-        ; and mouse.y >= button.y
-        ; and mouse.y < button.y + button.height
+        cmp edi, 0
+        jz .break
+
+        call addToBuffer
+
+        mov esi, 2
+        mov rdi, rax
+        call RedrawButton
+        mov rdi, [pressedButton]
+        call DrawCenteredLabel
+
+        mov r12, rcx
+
+        mov rdi, expressionBuffer
+        mov rsi, [expressionLength]
+        call dbprint
+
+        jmp .break
+
+        .break:
+            jmp mainloop
+
+
+    ; Find which button the mouse is currently hovering over
+    ; @return rdi Button ID or \0 if not found
+    ; @return rax *Button or \0 if not found
+    findButtonFromMouse:
         lea rcx, buttons
-        mov r12, buttonsTotal
+        mov r8d, buttonsTotal
 
         .ForEachButton:
             mov eax, [ev + Mouse.x]
@@ -412,46 +498,23 @@ _start:
 
             mov edx, [rcx + Button.height]
             add edx, [rcx + Button.y]
+
             cmp eax, edx
             jge .skip
-
-            jmp .found
+            
+            movzx edi, byte [rcx + Button.id]
+            mov rax, rcx
+            
+            ret
 
             .skip:
                 add rcx, Button_size
-                dec r12
+                dec r8d
                 jnz .ForEachButton
-            
-            jmp .break
 
-        .found:
-            movzx edi, byte [rcx + Button.id]
-
-            cmp dil, "B"
-            ; je .backspace
-            cmp dil, "E"
-            ; je .clearEntry
-            cmp dil, "C"
-            ; je .clearAll
-            cmp dil, "S"
-            ; je .squareRoot
-            cmp dil, "R"
-            ; je .reciprocal
-            cmp dil, '='
-            ; je .evaluate
-
-            call addToBuffer
-
-            mov r12, rcx
-
-            mov rdi, expressionBuffer
-            mov rsi, expressionLength
-            call dbprint
-
-            jmp .break
-
-        .break:
-            jmp mainloop
+                xor edi, edi 
+                xor eax, eax
+                ret
 
     ; Add a character to the expression buffer
     ; @param rdi character to append
@@ -481,8 +544,8 @@ _start:
         .DrawButtonsLoop:
             mov edi, [rbx + Button.x]
             mov esi, [rbx + Button.y]
-            mov rdx, [rbx + Button.width]
-            mov rcx, [rbx + Button.height]
+            mov edx, [rbx + Button.width]
+            mov ecx, [rbx + Button.height]
             mov r8d, [rbx + Button.type]
             call DrawButton
 
@@ -592,12 +655,25 @@ _start:
         pop rbx
         ret
 
+    ; Redraws an existing button
+    ; @param rdi *Button
+    ; @param esi visual state (0 normal | 1 hover | 2 pressed) 
+    RedrawButton:
+        mov r9d, esi
+        mov r8d, [rdi + Button.type]
+        mov rcx, [rdi + Button.height]
+        mov rdx, [rdi + Button.width]
+        mov rsi, [rdi + Button.y]
+        mov rdi, [rdi + Button.x]
+        ; Fall through to DrawButton
+
     ; Draws a button somewhere
     ; @param rdi X Position
-    ; @param rdi Y Position
+    ; @param rsi Y Position
     ; @param rdx Width
     ; @param rcx Height
-    ; @param r8 Type (0 dark ｜1 light)
+    ; @param r8 Type (0 dark ｜1 light | 2 hover | 3 pressed)
+    ; @param r9 visual state
     DrawButton:
         push rbp
         push rbx
@@ -605,7 +681,9 @@ _start:
         push r13
         push r14
         push r15
+        sub rsp, 8
 
+        mov [rsp], r9
         mov r12, rdi
         mov r13, rsi
         mov r14, rdx
@@ -645,6 +723,7 @@ _start:
         sub rcx, rbx
         call DrawRectangle
 
+        add rsp, 8
         pop r15
         pop r14
         pop r13
@@ -654,7 +733,13 @@ _start:
         ret
 
         .ColorSelectTop:
-            test rbp, rbp
+            cmp dword [rsp + 8], 2
+            je .PressedTop
+
+            cmp dword [rsp + 8], 1
+            jz .HoverTop
+
+            test ebp, ebp
             jz .DarkTop
 
             call SetForegroundGray3
@@ -664,7 +749,21 @@ _start:
             call SetForegroundGray6
             ret
 
+            .HoverTop:
+            call SetButtonHoverTop
+            ret
+
+            .PressedTop:
+            call SetButtonPressedTop
+            ret
+
         .ColorSelectBottom:
+            cmp dword [rsp + 8], 2
+            je .PressedBottom
+
+            cmp dword [rsp + 8], 1
+            jz .HoverBottom
+
             test rbp, rbp
             jz .DarkBottom
 
@@ -675,13 +774,25 @@ _start:
             call SetForegroundGray5
             ret
 
+            .HoverBottom:
+            call SetButtonHoverBottom
+            ret
+
+            .PressedBottom:
+            call SetButtonPressedBottom
+            ret
+
     ; Draws a rectangle
     ; @param rdi X position
     ; @param rsi Y position
     ; @param rdx Width
     ; @param rcx Height
     DrawRectangle:
-        push rcx
+        push rbp
+        mov rbp, rsp
+        and rsp, -16
+        sub rsp, 16
+        mov [rsp], rcx
         mov r9, rdx
         mov rcx, rdi
         mov r8, rsi
@@ -689,15 +800,8 @@ _start:
         mov rsi, [win]
         mov rdx, [gc]
         call XFillRectangle
-        add rsp, 8
-        ret
-
-    ForegroundBoilerplate:
-        sub rsp, 8
-        mov rdi, [dpy]
-        mov rsi, [gc]
-        call XSetForeground
-        add rsp, 8
+        mov rsp, rbp
+        pop rbp
         ret
 
     SetForegroundWhite:
@@ -727,6 +831,33 @@ _start:
     SetForegroundGray6: ; Button secondary top
         mov rdx, 0xECF2F8
         jmp ForegroundBoilerplate
+
+    SetButtonPressedBottom:
+        mov rdx, 0xCFD7DD
+        jmp ForegroundBoilerplate
+    
+    SetButtonPressedTop:
+        mov rdx, 0xE1E6EA
+        jmp ForegroundBoilerplate
+
+    SetButtonHoverBottom:
+        mov rdx, 0xE2EAF0
+        jmp ForegroundBoilerplate
+
+    SetButtonHoverTop:
+        mov rdx, 0xECF3FB
+        ; Fall through to ForegroundBoilerplate
+
+    ForegroundBoilerplate:
+    push rbp
+    mov rbp, rsp
+    and rsp, -16
+    mov rdi, [dpy]
+    mov rsi, [gc]
+    call XSetForeground
+    mov rsp, rbp
+    pop rbp
+    ret
 
     exit:
     mov eax, 60
