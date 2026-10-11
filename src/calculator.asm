@@ -1,12 +1,12 @@
 default rel
 
 global _start
-; debug
-extern dbprint
-extern dberr
 
 ; stringutils
 extern stringutilsstrlen
+
+; calcengine
+extern calcStrExpr
 
 ; X11 functions
 extern XOpenDisplay
@@ -31,6 +31,7 @@ extern XDefaultColormap
 extern XInternAtom
 extern XSetWMProtocols
 extern XCloseDisplay
+extern XLookupString
 
 ; Xft functions
 extern XftFontOpenName
@@ -38,6 +39,9 @@ extern XftDrawCreate
 extern XftColorAllocValue
 extern XftTextExtentsUtf8
 extern XftDrawStringUtf8
+
+; C function :<
+extern snprintf
 
 ; input masks
 KeyPressMask equ 1 << 0
@@ -49,14 +53,6 @@ LeaveWindowMask equ 1 << 5
 EventMask equ KeyPressMask | ButtonPressMask | ExposureMask | LeaveWindowMask | PointerMotionMask | ButtonReleaseMask
 
 section .data
-    dbprintcheck db "dbprint check passed",10
-    dbprintcheck_len equ $ - dbprintcheck
-    dberrcheck db "dberr check passed",10,10
-    dberrcheck_len equ $ - dberrcheck
-    displayconnerr db "Unable to connect to display",10
-    displayconnerr_len equ $ - displayconnerr
-    displayconn db "Display connected", 10
-    displayconn_len equ $ - displayconn
     windowtitle db "Calculator",0
     newline db 10
 
@@ -64,6 +60,7 @@ section .data
     leftmouseprint_len equ $ - leftmouseprint
 
     font_name db "Cantarell-12", 0
+    font2_name db "Cantarell-26", 0
 
     wm_delete_name db "WM_DELETE_WINDOW", 0
 
@@ -163,6 +160,8 @@ section .data
         label_8 db "8",0
         label_9 db "9",0
 
+    resultFormat db "%.8g",0
+
 section .bss
     ; X11 setup
     screen_num resb 4
@@ -182,24 +181,21 @@ section .bss
 
     font_struct resq 1
 
-    xft_font resq 1
+    xft_font_small resq 1
+    xft_font_large resq 1
     xft_draw resq 1
     xft_color resb 16
 
     expression_cap equ 256
     expressionBuffer resb expression_cap
     expressionLength resq 1
+    expressionDisplayBuffer resb expression_cap * 2
+    resultBuffer resb 128
+    resultLength resq 1
+    keyboardBuffer resb 32
 
 section .text
 _start:
-    ; -DEBUG test dbprint functionality
-    mov rdi, dbprintcheck
-    mov rsi, dbprintcheck_len
-    call dbprint
-    ; -DEBUG test dberr functionality
-    mov rdi, dberrcheck
-    mov rsi, dberrcheck_len
-    call dberr
 
     ; X setup
     ; Connect to display server
@@ -210,16 +206,9 @@ _start:
     cmp qword [dpy], 0
     jne displayconndone
 
-    mov rdi, displayconnerr
-    mov rsi, displayconnerr_len
-    call dberr
     jmp exit
 
     displayconndone:
-        mov rdi, displayconn
-        mov rsi, displayconn_len
-        call dbprint
-
     mov rdi, [dpy]
     call XDefaultScreen
     mov [screen_num], eax
@@ -293,7 +282,16 @@ _start:
 
     test rax, rax
     jz exit
-    mov [xft_font], rax
+    mov [xft_font_small], rax
+
+    mov rdi, [dpy]
+    mov esi, [screen_num]
+    lea rdx, [font2_name]
+    call XftFontOpenName
+
+    test rax, rax
+    jz exit
+    mov [xft_font_large], rax
 
     mov rdi, [dpy]
     mov esi, [screen_num]
@@ -411,6 +409,90 @@ _start:
             jmp exit
 
     onKeyPress:
+        sub rsp, 32
+
+        lea rdi, [ev]
+        lea rsi, [keyboardBuffer]
+        mov edx, 32
+        lea rcx, [rsp]
+        xor r8d, r8d
+        call XLookupString
+
+        mov rdx, [rsp]
+
+        cmp edx, 0xFF0D ; return
+        je .equals
+        cmp edx, 0xFF8D ; enter
+        je .equals
+        cmp edx, 0xFF08 ; backspace
+        je .backspace
+        cmp edx, 0xFF1B ; escape
+        je .clear
+
+        test eax, eax
+        jz .done
+
+        movzx edi, byte [keyboardBuffer]
+
+        cmp dil, "0"
+        jb .operators
+        cmp dil, "9"
+        jbe .input
+
+        .operators:
+            cmp dil, "+"
+            je .input
+            cmp dil, "-"
+            je .input
+            cmp dil, "*"
+            je .input
+            cmp dil, "/"
+            je .input
+            cmp dil, "."
+            je .input
+            cmp dil, "("
+            je .input
+            cmp dil, ")"
+            je .input
+            cmp dil, "="
+            je .equals
+            cmp dil, "c"
+            je .clear
+
+            jmp .done
+
+        .input:
+            call addToBuffer
+            jmp .done
+
+        .equals:
+            call evaluateExpression
+            jmp .done
+
+
+        .backspace:
+            mov rcx, [expressionLength]
+            test rcx, rcx
+            jz .done
+
+            dec rcx
+            mov [expressionLength], rcx
+            mov byte [expressionBuffer + rcx], 0
+
+            call redrawExpressionText
+            jmp .done
+        
+        .clear:
+            mov qword [expressionLength], 0
+            mov byte [expressionBuffer], 0
+            mov byte [resultBuffer], 0
+            mov qword [resultLength], 0
+
+            call redrawExpressionText
+            call redrawResultText
+
+        .done:
+        add rsp, 32
         jmp mainloop
 
     struc Mouse
@@ -455,21 +537,97 @@ _start:
         cmp edi, 0
         jz .break
 
-        call addToBuffer
+        cmp dil, "="
+        jne .notEquals
 
-        mov esi, 2
-        mov rdi, rax
-        call RedrawButton
-        mov rdi, [pressedButton]
-        call DrawCenteredLabel
-
-        mov r12, rcx
-
-        mov rdi, expressionBuffer
-        mov rsi, [expressionLength]
-        call dbprint
-
+        call evaluateExpression
         jmp .break
+
+        .notEquals:
+
+        cmp dil, "B"
+        je .backspace
+
+        cmp dil, "C"
+        je .clear
+
+        cmp dil, "E"
+        je .clearEntry
+
+        cmp dil, "S"
+        je .break
+
+        cmp dil, "R"
+        je .break
+
+        jmp .normalInput
+
+        .clearEntry:
+            mov rcx, [expressionLength]
+
+            .scan:
+                test rcx, rcx
+                jz .truncate
+
+                mov al, [expressionBuffer + rcx - 1]
+
+                cmp al, "+"
+                je .truncate
+                cmp al, "-"
+                je .truncate
+                cmp al, "*"
+                je .truncate
+                cmp al, "/"
+                je .truncate
+                cmp al, "("
+                je .truncate
+                cmp al, ")"
+                je .truncate
+
+                dec rcx
+                jmp .scan
+
+            .truncate:
+                mov [expressionLength], rcx
+                mov byte [expressionBuffer + rcx], 0
+
+                call redrawExpressionText
+                jmp .break
+
+        .clear:
+            mov qword [expressionLength], 0
+            mov byte [expressionBuffer], 0
+            mov byte [resultBuffer], 0
+            mov qword [resultLength], 0
+
+            call redrawExpressionText
+            call redrawResultText
+            jmp .break
+
+        .backspace:
+            mov rcx, [expressionLength]
+            test rcx, rcx
+            jz .break
+
+            dec rcx
+            mov [expressionLength], rcx
+            mov byte [expressionBuffer + rcx], 0
+
+            call redrawExpressionText
+            jmp .break
+
+        .normalInput:
+            call addToBuffer
+
+            mov esi, 2
+            mov rdi, [pressedButton]
+            call RedrawButton
+            mov rdi, [pressedButton]
+            call DrawCenteredLabel
+
+            mov r12, rcx
+
+            jmp .break
 
         .break:
             jmp mainloop
@@ -521,13 +679,21 @@ _start:
     addToBuffer:
         mov rcx, [expressionLength]
 
-        cmp rcx, expression_cap - 1
-        jae .full
+        test rcx, rcx
+        jnz .append
 
-        mov [expressionBuffer + rcx], dil
-        inc rcx
-        mov byte [expressionBuffer + rcx], 0
-        mov [expressionLength], rcx
+        mov byte [expressionBuffer], 0
+
+        .append:
+            cmp rcx, expression_cap - 1
+            jae .full
+
+            mov [expressionBuffer + rcx], dil
+            inc rcx
+            mov byte [expressionBuffer + rcx], 0
+            mov [expressionLength], rcx
+
+            call redrawExpressionText
 
         .full:
             ret
@@ -561,12 +727,122 @@ _start:
 
         jmp mainloop
 
-    draw: ; Result window
-        %define border_radius 1
-        %define margin 5
-        %define resultborderwidth  2
-        %define result_w 270
-        %define result_h 80
+    evaluateExpression:
+        sub rsp, 8
+
+        lea rdi, [expressionBuffer]
+        call calcStrExpr
+
+        mov rdi, resultBuffer
+        mov esi, 128
+        lea rdx, [resultFormat]
+
+        mov eax, 1
+        call snprintf
+
+        call redrawResultText
+        add rsp, 8
+
+        mov qword [expressionLength], 0
+        ret
+
+    %define border_radius 1
+    %define margin 5
+    %define resultborderwidth  2
+    %define result_w 270
+    %define result_h 80
+
+    redrawResultText:
+        push r12
+        sub rsp, 16
+
+        call drawResultWindow
+
+        mov rdi, resultBuffer
+        call stringutilsstrlen
+        mov r12d, eax
+
+        mov rdi, [dpy]
+        mov rsi, [xft_font_large]
+        mov rdx, resultBuffer
+        mov ecx, r12d
+        lea r8, [rsp]
+        call XftTextExtentsUtf8
+        
+        mov esi, 268
+        movsx eax, word [rsp + 4]
+        add esi, eax
+        movzx eax, word [rsp]
+        sub esi, eax
+        
+        mov rdi, resultBuffer
+        mov edx, 72
+        mov rcx, xft_font_large
+        call DrawText
+
+        add rsp, 16
+        pop r12
+        ret
+
+    makeExpressionDisplay:
+        lea rsi, [expressionBuffer]
+
+        mov rax, [expressionLength]
+        cmp rax, 28
+        jbe .start
+
+        sub rax, 28
+        add rsi, rax
+
+        .start:
+            lea rdi, [expressionDisplayBuffer]
+
+        .loop:
+            mov al, [rsi]
+            test al, al
+            jz .done
+
+            cmp al, "*"
+            je .multiply
+
+            cmp al, "/"
+            je .divide
+
+            mov [rdi], al
+            inc rdi
+            jmp .next
+
+            .multiply:
+                mov byte [rdi], 0xC3
+                mov byte [rdi + 1], 0x97 ; ×
+                add rdi, 2
+                jmp .next
+
+            .divide:
+                mov byte [rdi], 0xC3
+                mov byte [rdi + 1], 0xB7 ; ÷
+                add rdi, 2
+
+            .next:
+                inc rsi
+                jmp .loop
+
+        .done:
+            mov byte [rdi], 0
+            ret
+
+    redrawExpressionText:
+        call drawExpressionWindow
+        call makeExpressionDisplay
+
+        lea rdi, [expressionDisplayBuffer]
+        mov esi, 12
+        mov edx, 28
+        mov rcx, xft_font_small
+        call DrawText
+        ret
+
+    draw: ; Initial Result window
         ; Border
         call SetForegroundGray4
         mov rdi, margin + border_radius
@@ -582,21 +858,72 @@ _start:
         call DrawRectangle
 
         ; Top
+        call drawExpressionWindow
+
+        ; Bottom
+        call drawResultWindow
+
+        call redrawResultText
+        call redrawExpressionText
+        ret
+
+    drawExpressionWindow:
         call SetForegroundGray1
         mov rdi, margin + resultborderwidth
         mov rsi, margin + resultborderwidth
         mov rdx, result_w - resultborderwidth * 2
-        mov rcx, result_h / 2
-        call DrawRectangle
-
-        ; Bottom
-        call SetForegroundWhite
-        mov rdi, margin + resultborderwidth
-        mov rsi, margin - resultborderwidth + result_h / 2
-        mov rdx, result_w - resultborderwidth * 2
-        mov rcx, result_h / 2
+        mov rcx, 30
         call DrawRectangle
         ret
+    
+    drawResultWindow:
+        call SetForegroundWhite
+        mov rdi, margin + resultborderwidth
+        mov rsi, margin + resultborderwidth + 30
+        mov rdx, result_w - resultborderwidth * 2
+        mov rcx, result_h - resultborderwidth * 2 - 30
+        call DrawRectangle
+        ret
+
+    ; Draw text at some position
+    ; @param rdi *Buf text buffer
+    ; @param esi x position
+    ; @param edx y position
+    ; @param rcx *Font
+    DrawText:
+        push rbx
+        push r12
+        push r13
+        push r14
+
+        sub rsp, 8
+
+        mov rbx, rdi
+        mov r12d, esi
+        mov r13d, edx
+        mov r14, rcx
+
+        mov rdi, rbx
+        call stringutilsstrlen
+
+        mov rdi, [xft_draw]
+        lea rsi, [xft_color]
+        mov rdx, [r14]
+        mov ecx, r12d
+        mov r8d, r13d
+        mov r9, rbx
+
+        sub rsp, 16
+        mov [rsp], rax
+        call XftDrawStringUtf8
+        add rsp, 16
+
+        add rsp, 8
+        pop r14
+        pop r13
+        pop r12
+        pop rbx
+        ret 
 
     ; Draws a centered label on a button
     ; @param rdi *Button
@@ -615,7 +942,7 @@ _start:
 
         ; center x
         mov rdi, [dpy]
-        mov rsi, [xft_font]
+        mov rsi, [xft_font_small]
         mov rdx, [rbx + Button.label]
         mov ecx, r12d
         lea r8, [rsp]
@@ -642,7 +969,7 @@ _start:
 
         mov rdi, [xft_draw]
         lea rsi, [xft_color]
-        mov rdx, [xft_font]
+        mov rdx, [xft_font_small]
         mov ecx, r13d
         mov r9, [rbx + Button.label]
 
@@ -661,10 +988,10 @@ _start:
     RedrawButton:
         mov r9d, esi
         mov r8d, [rdi + Button.type]
-        mov rcx, [rdi + Button.height]
-        mov rdx, [rdi + Button.width]
-        mov rsi, [rdi + Button.y]
-        mov rdi, [rdi + Button.x]
+        mov ecx, [rdi + Button.height]
+        mov edx, [rdi + Button.width]
+        mov esi, [rdi + Button.y]
+        mov edi, [rdi + Button.x]
         ; Fall through to DrawButton
 
     ; Draws a button somewhere
