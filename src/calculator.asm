@@ -101,7 +101,7 @@ section .data
         dq label_9
         dd 170, 135, 50, 40, 0, "/" ; division
         dq label_dv
-        dd 225, 135, 50, 40, 0, "S" ; square root
+        dd 225, 135, 50, 40, 0, "s" ; square root
         dq label_sr
 
         dd 5, 180, 50, 40, 1, "4"
@@ -112,7 +112,7 @@ section .data
         dq label_6
         dd 170, 180, 50, 40, 0, "*" ; multiplication
         dq label_mt
-        dd 225, 180, 50, 40, 0, "R" ; reciprocal
+        dd 225, 180, 50, 40, 0, "^" ; exponent
         dq label_rc
 
         dd 5, 225, 50, 40, 1, "1"
@@ -144,7 +144,7 @@ section .data
         label_dv db "÷", 0
         label_sr db "√", 0
         label_mt db "×", 0
-        label_rc db "1/x", 0
+        label_rc db "^", 0
         label_sb db "-", 0
         label_eq db "=", 0
         label_dc db ".", 0
@@ -408,6 +408,116 @@ _start:
             call XCloseDisplay
             jmp exit
 
+    ; Handle expressions from calculator input
+    ; @param dil button id
+    handleInput:
+        sub rsp, 8
+        cmp dil, "="
+        je .equals
+
+        cmp dil, "B"
+        je .backspace
+
+        cmp dil, "C"
+        je .clear
+
+        cmp dil, "E"
+        je .clearEntry
+
+        cmp dil, "0"
+        jb .operators
+        cmp dil, "9"
+        jbe .append
+        jmp .operators
+
+        .equals:
+            call evaluateExpression
+            jmp .done
+
+        .backspace:
+            mov rcx, [expressionLength]
+            test rcx, rcx
+            jz .done
+
+            dec rcx
+            mov [expressionLength], rcx
+            mov byte [expressionBuffer + rcx], 0
+
+            call redrawExpressionText
+            jmp .done
+
+        .clear:
+            mov qword [expressionLength], 0
+            mov byte [expressionBuffer], 0
+            mov byte [resultBuffer], 0
+            mov qword [resultLength], 0
+
+            call redrawExpressionText
+            call redrawResultText
+            jmp .done
+
+        .clearEntry:
+            mov rcx, [expressionLength]
+        
+        .scan:
+            test rcx, rcx
+            jz .truncate
+
+            mov al, [expressionBuffer + rcx - 1]
+            
+            cmp al, "+"
+            je .truncate
+            cmp al, "-"
+            je .truncate
+            cmp al, "*"
+            je .truncate
+            cmp al, "/"
+            je .truncate
+            cmp al, "^"
+            je .truncate
+            cmp al, "("
+            je .truncate
+            cmp al, ")"
+            je .truncate
+            
+            dec rcx
+            jmp .scan
+        
+        .truncate:  
+            mov [expressionLength], rcx
+            mov byte [expressionBuffer + rcx], 0
+
+            call redrawExpressionText
+        
+        .done:
+            add rsp, 8
+            ret
+
+        .operators:
+            cmp dil, "+"
+            je .append
+            cmp dil, "-"
+            je .append
+            cmp dil, "*"
+            je .append
+            cmp dil, "/"
+            je .append
+            cmp dil, "."
+            je .append
+            cmp dil, "("
+            je .append
+            cmp dil, ")"
+            je .append
+            cmp dil, "^"
+            je .append
+            cmp dil, "s"
+            je .append
+            jmp .done
+
+        .append:
+            call addToBuffer
+            jmp .done
+
     onKeyPress:
         sub rsp, 32
 
@@ -434,62 +544,27 @@ _start:
 
         movzx edi, byte [keyboardBuffer]
 
-        cmp dil, "0"
-        jb .operators
-        cmp dil, "9"
-        jbe .input
-
-        .operators:
-            cmp dil, "+"
-            je .input
-            cmp dil, "-"
-            je .input
-            cmp dil, "*"
-            je .input
-            cmp dil, "/"
-            je .input
-            cmp dil, "."
-            je .input
-            cmp dil, "("
-            je .input
-            cmp dil, ")"
-            je .input
-            cmp dil, "="
-            je .equals
-            cmp dil, "c"
-            je .clear
-
-            jmp .done
-
-        .input:
-            call addToBuffer
+        cmp dil, "c"
+        jne .dispatch
+        mov dil, "C"
+        
+        .dispatch:
+            call handleInput
             jmp .done
 
         .equals:
-            call evaluateExpression
+            mov edi, "="
+            call handleInput
             jmp .done
 
-
         .backspace:
-            mov rcx, [expressionLength]
-            test rcx, rcx
-            jz .done
-
-            dec rcx
-            mov [expressionLength], rcx
-            mov byte [expressionBuffer + rcx], 0
-
-            call redrawExpressionText
+            mov edi, "B"
+            call handleInput
             jmp .done
         
         .clear:
-            mov qword [expressionLength], 0
-            mov byte [expressionBuffer], 0
-            mov byte [resultBuffer], 0
-            mov qword [resultLength], 0
-
-            call redrawExpressionText
-            call redrawResultText
+            mov edi, "C"
+            call handleInput
 
         .done:
         add rsp, 32
@@ -527,109 +602,26 @@ _start:
 
     onButtonPress:
         ; left mouse
-        mov eax, [ev + Mouse.button]
-        cmp eax, 1
-        jne .break
+        cmp dword [ev + Mouse.button], 1
+        jne .done
 
         call findButtonFromMouse
+
+        test rax, rax
+        jz .done
+
         mov [pressedButton], rax
 
-        cmp edi, 0
-        jz .break
+        call handleInput
 
-        cmp dil, "="
-        jne .notEquals
+        mov rdi, [pressedButton]
+        mov esi, 2
+        call RedrawButton
 
-        call evaluateExpression
-        jmp .break
+        mov rdi, [pressedButton]
+        call DrawCenteredLabel
 
-        .notEquals:
-
-        cmp dil, "B"
-        je .backspace
-
-        cmp dil, "C"
-        je .clear
-
-        cmp dil, "E"
-        je .clearEntry
-
-        cmp dil, "S"
-        je .break
-
-        cmp dil, "R"
-        je .break
-
-        jmp .normalInput
-
-        .clearEntry:
-            mov rcx, [expressionLength]
-
-            .scan:
-                test rcx, rcx
-                jz .truncate
-
-                mov al, [expressionBuffer + rcx - 1]
-
-                cmp al, "+"
-                je .truncate
-                cmp al, "-"
-                je .truncate
-                cmp al, "*"
-                je .truncate
-                cmp al, "/"
-                je .truncate
-                cmp al, "("
-                je .truncate
-                cmp al, ")"
-                je .truncate
-
-                dec rcx
-                jmp .scan
-
-            .truncate:
-                mov [expressionLength], rcx
-                mov byte [expressionBuffer + rcx], 0
-
-                call redrawExpressionText
-                jmp .break
-
-        .clear:
-            mov qword [expressionLength], 0
-            mov byte [expressionBuffer], 0
-            mov byte [resultBuffer], 0
-            mov qword [resultLength], 0
-
-            call redrawExpressionText
-            call redrawResultText
-            jmp .break
-
-        .backspace:
-            mov rcx, [expressionLength]
-            test rcx, rcx
-            jz .break
-
-            dec rcx
-            mov [expressionLength], rcx
-            mov byte [expressionBuffer + rcx], 0
-
-            call redrawExpressionText
-            jmp .break
-
-        .normalInput:
-            call addToBuffer
-
-            mov esi, 2
-            mov rdi, [pressedButton]
-            call RedrawButton
-            mov rdi, [pressedButton]
-            call DrawCenteredLabel
-
-            mov r12, rcx
-
-            jmp .break
-
-        .break:
+        .done:
             jmp mainloop
 
 
@@ -808,9 +800,18 @@ _start:
             cmp al, "/"
             je .divide
 
+            cmp al, "s"
+            je .sqrt
+
             mov [rdi], al
             inc rdi
             jmp .next
+
+            .sqrt:
+                mov byte [rdi], 0xE2
+                mov word [rdi + 1], 0x9A88 ; 
+                add rdi, 3
+                jmp .next
 
             .multiply:
                 mov byte [rdi], 0xC3

@@ -1,5 +1,6 @@
 default rel
 extern strtod ; C lib string to decimal :<
+extern pow
 
 global calcStrExpr
 
@@ -73,6 +74,8 @@ calcStrExpr: ; rdi *Buf, xmm0 float return
         je .Precedence_20
         cmp al, "/"
         je .Precedence_20
+        cmp al, "^"
+        je .Precedence_40
 
         mov rax, -1
         ret        
@@ -83,6 +86,10 @@ calcStrExpr: ; rdi *Buf, xmm0 float return
 
         .Precedence_20:
             mov rax, 20
+            ret
+
+        .Precedence_40:
+            mov rax, 40
             ret
 
     ; Pratt ewww
@@ -100,6 +107,8 @@ calcStrExpr: ; rdi *Buf, xmm0 float return
         je .EvaluateSubtraction
         cmp al, "+"
         je .EvaluateAddition
+        cmp al, "s"
+        je .EvaluateSqrt
         cmp al, '.'
         je .ValidExpression
         cmp al, '0'
@@ -118,13 +127,22 @@ calcStrExpr: ; rdi *Buf, xmm0 float return
         
         .EvaluateAddition:
             call .ConsumeToken
-            call .ParsePrimary
+            mov edi, 30
+            call .ParseExpression
             jmp .PrimaryDone
 
         .EvaluateSubtraction:
             call .ConsumeToken
-            call .ParsePrimary
+            mov edi, 30
+            call .ParseExpression
             xorpd xmm0, [rel sign_mask]
+            jmp .PrimaryDone
+        
+        .EvaluateSqrt:
+            call .ConsumeToken
+            mov edi, 40
+            call .ParseExpression
+            sqrtsd xmm0, xmm0
             jmp .PrimaryDone
 
         .EvaluateContents:
@@ -168,10 +186,16 @@ calcStrExpr: ; rdi *Buf, xmm0 float return
             call .ConsumeToken
 
             mov rdi, [rsp+8]
-            inc rdi
-            call .ParseExpression
 
-            movsd xmm1, [rsp] ; left
+            cmp bl, "^"
+            je .RightAssociative
+
+            inc rdi
+
+            .RightAssociative:
+                call .ParseExpression
+
+                movsd xmm1, [rsp] ; left
 
             cmp bl, "+"
             je .ParseAdd
@@ -181,6 +205,8 @@ calcStrExpr: ; rdi *Buf, xmm0 float return
             je .ParseMul
             cmp bl, "/"
             je .ParseDiv
+            cmp bl, "^"
+            je .ParsePow
 
             .ParseAdd:
                 addsd xmm1, xmm0
@@ -200,6 +226,15 @@ calcStrExpr: ; rdi *Buf, xmm0 float return
             .ParseDiv:
                 divsd xmm1, xmm0
                 movsd [rsp], xmm1
+                jmp .ParseLoop
+
+            .ParsePow:
+                movapd xmm1, xmm0
+                movsd xmm0, [rsp]
+
+                call pow
+
+                movsd [rsp], xmm0
                 jmp .ParseLoop
 
         .ParseDone:
