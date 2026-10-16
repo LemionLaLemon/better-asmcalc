@@ -4,6 +4,8 @@ Supports standard four functions (+ - * /), sqrt, and ^ and uses Pratt Parsing t
 
 <img width="292" height="329" alt="Demonstration of the calculator" src="https://github.com/user-attachments/assets/24669dd2-9f4a-4785-8434-fd45600136f1" />
 
+https://youtu.be/MNfarZkCy8w
+
 ## Dependencies
 
 | Library  | Purpose |
